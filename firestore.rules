@@ -1,0 +1,138 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- PRIMITIVES ---
+    function isValidId(id) { return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+    function isVerifiedUser() { return isSignedIn() && request.auth.token.email_verified == true; }
+    // As per requirement, if app has admin feature (portal might later), define isAdmin
+    // We will just define it minimally
+    function isAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+
+    // --- BLUEPRINTS ---
+    function isValidUser(data) {
+      return data.size() == 3 
+        && data.keys().hasAll(['role', 'createdAt', 'updatedAt'])
+        && data.role in ['patient', 'admin']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPatientInfo(data) {
+      return data.keys().hasAll(['firstName', 'lastName', 'email', 'phone', 'updatedAt'])
+        && (data.firstName is string ? data.firstName.size() <= 100 : true)
+        && (data.lastName is string ? data.lastName.size() <= 100 : true)
+        && data.email is string && data.email.size() <= 150
+        && (data.phone is string ? data.phone.size() <= 20 : true)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAppointment(data) {
+      return data.keys().hasAll(['userId', 'date', 'time', 'treatment', 'status', 'notes', 'createdAt', 'updatedAt'])
+        && data.userId is string && data.userId.size() <= 128
+        && data.date is string && data.date.size() <= 20
+        && data.time is string && data.time.size() <= 20
+        && data.treatment is string && data.treatment.size() <= 100
+        && data.status in ['scheduled', 'completed', 'cancelled']
+        && data.notes is string && data.notes.size() <= 1000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTreatmentSummary(data) {
+      return data.keys().hasAll(['userId', 'date', 'procedure', 'notes', 'aftercare', 'createdAt'])
+        && data.userId is string && data.userId.size() <= 128
+        && data.date is string && data.date.size() <= 20
+        && data.procedure is string && data.procedure.size() <= 200
+        && data.notes is string && data.notes.size() <= 2000
+        && data.aftercare is string && data.aftercare.size() <= 2000
+        && data.createdAt is timestamp;
+    }
+
+    // --- ROUTES ---
+
+    match /users/{userId} {
+      allow get: if isVerifiedUser() && (userId == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (isAdmin());
+      allow create: if isVerifiedUser() 
+                    && isValidId(userId)
+                    && userId == request.auth.uid
+                    && isValidUser(incoming())
+                    && incoming().role == 'patient' // Prevent self-assigning admin
+                    && incoming().createdAt == request.time
+                    && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() 
+                    && (userId == request.auth.uid || isAdmin())
+                    && incoming().diff(existing()).affectedKeys().hasOnly(['updatedAt'])
+                    && incoming().updatedAt == request.time;
+      // Do not allow delete
+    }
+
+    // PII Isolation
+    match /users/{userId}/private/info {
+      allow get: if isVerifiedUser() && (userId == request.auth.uid || isAdmin());
+      allow list: if false; // Never list PII directly unless strictly needed
+      allow create: if isVerifiedUser()
+                    && isValidId(userId)
+                    && userId == request.auth.uid
+                    && isValidPatientInfo(incoming())
+                    && incoming().updatedAt == request.time
+                    && exists(/databases/$(database)/documents/users/$(userId));
+      allow update: if isVerifiedUser()
+                    && (userId == request.auth.uid || isAdmin())
+                    && incoming().diff(existing()).affectedKeys().hasOnly(['firstName', 'lastName', 'phone', 'updatedAt'])
+                    && incoming().updatedAt == request.time;
+    }
+
+    match /appointments/{appointmentId} {
+      // Must check if user owns it
+      allow get: if isVerifiedUser() && isValidId(appointmentId) && (existing().userId == request.auth.uid || isAdmin());
+      // List query enforced
+      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
+      
+      allow create: if isVerifiedUser()
+                    && isValidId(appointmentId)
+                    && isValidAppointment(incoming())
+                    && incoming().userId == request.auth.uid
+                    && incoming().createdAt == request.time
+                    && incoming().updatedAt == request.time
+                    && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+
+      allow update: if isVerifiedUser()
+                    && (existing().userId == request.auth.uid || isAdmin())
+                    && isValidAppointment(incoming())
+                    && incoming().userId == existing().userId // Immortal field
+                    && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'time', 'treatment', 'status', 'notes', 'updatedAt'])
+                    && incoming().updatedAt == request.time;
+    }
+
+    match /treatment_summaries/{summaryId} {
+      allow get: if isVerifiedUser() && isValidId(summaryId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isVerifiedUser() && (resource.data.userId == request.auth.uid || isAdmin());
+      
+      // Usually clinic admins create these, but let's allow admins to create. 
+      allow create: if isAdmin()
+                    && isValidId(summaryId)
+                    && isValidTreatmentSummary(incoming())
+                    && incoming().createdAt == request.time;
+      
+      allow update: if isAdmin()
+                    && isValidTreatmentSummary(incoming())
+                    && incoming().userId == existing().userId
+                    && incoming().createdAt == existing().createdAt
+                    && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'procedure', 'notes', 'aftercare']);
+    }
+    
+    // Explicit Admin match block so it exists for isAdmin() check
+    match /admins/{adminId} {
+      allow read: if false; // only accessible via exists()
+      allow write: if false; // populated server side
+    }
+  }
+}

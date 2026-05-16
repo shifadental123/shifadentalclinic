@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Public or base user record",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["patient", "admin"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["role", "createdAt", "updatedAt"]
+    },
+    "PatientInfo": {
+      "title": "PatientInfo",
+      "description": "High PII patient information",
+      "type": "object",
+      "properties": {
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["email", "updatedAt"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Patient appointment records",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "treatment": { "type": "string" },
+        "status": { "type": "string", "enum": ["scheduled", "completed", "cancelled"] },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "date", "time", "treatment", "status", "createdAt", "updatedAt"]
+    },
+    "TreatmentSummary": {
+      "title": "TreatmentSummary",
+      "description": "Summary of completed treatments",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string" },
+        "procedure": { "type": "string" },
+        "notes": { "type": "string" },
+        "aftercare": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "date", "procedure", "notes", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Base user records"
+    },
+    "/users/{userId}/private/info": {
+      "schema": { "$ref": "#/entities/PatientInfo" },
+      "description": "Isolated PII for users"
+    },
+    "/appointments/{appointmentId}": {
+      "schema": { "$ref": "#/entities/Appointment" },
+      "description": "User appointments"
+    },
+    "/treatment_summaries/{summaryId}": {
+      "schema": { "$ref": "#/entities/TreatmentSummary" },
+      "description": "User treatment histories"
+    }
+  }
+}
